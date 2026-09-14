@@ -114,6 +114,13 @@
   .jrow .jm{margin-left:auto;font-size:14px;color:var(--muted);font-weight:600}
   .j-locked{text-align:center;font-size:12.5px;color:var(--muted);margin-top:10px}
   .undisc{color:#c9c7bf}
+  /* lesson runner: burst progress + end-of-lesson recap */
+  .lesson-bar{display:flex;gap:6px;justify-content:center;margin:2px 0 14px}
+  .lesson-bar .lb{width:26px;height:5px;border-radius:3px;background:var(--line);transition:background .2s}
+  .lesson-bar .lb.done{background:var(--good)}
+  .lesson-bar .lb.now{background:var(--accent)}
+  .recap-row{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin:12px 0 4px}
+  .recap{background:var(--accent-soft);color:var(--accent);border-radius:11px;padding:6px 11px;font-weight:700;font-size:15px}
   /* the guess moment */
   .guess-q{font-size:15px;color:var(--muted);text-align:center;margin:2px 0 0}
   .guess-han{font-size:52px;font-weight:800;text-align:center;cursor:pointer;line-height:1.15}
@@ -453,7 +460,7 @@ const SOON=[{emoji:"💬"}];   // fill-in-the-blank + more patterns coming
 // hints (the sound under each tile) vanish once every letter in the word is known.
 function makeWord(w, seen){
   const need=needSetOf(w.han);
-  return { word:w.han, roma:romaOf(w.han), emoji:w.emoji, mean:w.mean, tag:"",
+  return { id:w.han, word:w.han, roma:romaOf(w.han), emoji:w.emoji, mean:w.mean, tag:"",
            blocks:blocksOf(w.han), tray:trayFor(w.han), hard:[...need].every(j=>seen.has(j)) };
 }
 function makeSentence(s, seen){   // PARKED: the fill-in-the-blank builder (given phrase + build one word). Not called yet.
@@ -467,7 +474,7 @@ function makeSentence(s, seen){   // PARKED: the fill-in-the-blank builder (give
 }
 function makeM2(m){
   const words=m.seq.map(s=>s[0]);
-  return { m2:true, word:words.join(" "), roma:words.map(romaOf).join(" "),
+  return { m2:true, id:"s:"+words.join("_"), word:words.join(" "), roma:words.map(romaOf).join(" "),
            mean:m.mean, emoji:m.emoji, seq:m.seq, tray:[...words, m.decoy], hard:false };
 }
 function buildCurriculum(){
@@ -483,6 +490,21 @@ function buildCurriculum(){
 }
 const L = buildCurriculum();
 const WORDS = L.map(l=>l.word);
+const byId = {}; L.forEach((it,i)=>byId[it.id]=i);   // stable id -> current position
+
+/* ---- lessons: short bursts of items, one micro-goal. A lesson ends on its sentence,
+   or after LESSON_MAX items. This is the unit the learner plays and the map shows;
+   individual items stay the unit that spaced-repetition reviews. Lessons carry a stable
+   id (their items' ids), so inserting/reordering never shifts saved progress. ---- */
+const LESSON_MAX=5;
+const LESSONS=(()=>{
+  const out=[]; let cur=[];
+  const flush=()=>{ if(cur.length){ out.push({id:cur.map(it=>it.id).join("+"), items:cur}); cur=[]; } };
+  L.forEach(it=>{ cur.push(it); if(it.m2 || cur.length>=LESSON_MAX) flush(); });
+  flush();
+  return out;
+})();
+const lessonEmoji = le => le.items[le.items.length-1].emoji || le.items[0].emoji;
 
 /* ---------- tiny audio (synth, no files) ---------- */
 let AC;
@@ -615,23 +637,25 @@ function cloudSaveDebounced(){ if(!sb||!user) return; clearTimeout(_syncT); _syn
 
 const shuffle = a => a.map(v=>[Math.random(),v]).sort((x,y)=>x[0]-y[0]).map(p=>p[1]);
 
-/* progress: highest unlocked level, remembered on this device. no skipping. */
-const PKEY="hangeul.progress.v1";
-function loadProgress(){ try{ return Math.min(L.length, Math.max(0, parseInt(localStorage.getItem(PKEY))||0)); }catch(e){ return 0; } }
-function saveProgress(){ try{ localStorage.setItem(PKEY, String(done)); }catch(e){} cloudSaveDebounced(); }
-let done = loadProgress();
-
-/* ---- spaced repetition + stars + streak (local only, no backend) ---- */
-const SRS_KEY="hangeul.srs.v1", STREAK_KEY="hangeul.streak.v1", SIM_KEY="hangeul.simday.v1";
-const DAY=86400000, DUE_BY_STARS=[1,3,7,16];      // days to next review at 0/1/2/3 stars
 const readJSON=(k,d)=>{ try{ const v=JSON.parse(localStorage.getItem(k)); return v==null?d:v; }catch(e){ return d; } };
 const writeJSON=(k,v)=>{ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} };
-let srs=readJSON(SRS_KEY,{});                      // { idx: {stars, due} }, due = a day number
+
+/* progress: which lessons are completed (stable ids), remembered on this device. no skipping. */
+const DONE_KEY="hangeul.done.v2";
+let doneSet=new Set(readJSON(DONE_KEY,[]));
+const saveDone=()=>{ writeJSON(DONE_KEY,[...doneSet]); cloudSaveDebounced(); };
+const frontier=()=>{ const i=LESSONS.findIndex(le=>!doneSet.has(le.id)); return i<0?LESSONS.length:i; };
+const lessonState=i=> doneSet.has(LESSONS[i].id) ? "done" : (i===frontier() ? "current" : "locked");
+
+/* ---- spaced repetition + stars + streak (local only, no backend). srs keyed by item id ---- */
+const SRS_KEY="hangeul.srs.v2", STREAK_KEY="hangeul.streak.v1", SIM_KEY="hangeul.simday.v1";
+const DAY=86400000, DUE_BY_STARS=[1,3,7,16];      // days to next review at 0/1/2/3 stars
+let srs=readJSON(SRS_KEY,{});                      // { itemId: {stars, due} }, due = a day number
 let streak=readJSON(STREAK_KEY,{count:0,day:-1});
 let simDay=0; try{ simDay=parseInt(localStorage.getItem(SIM_KEY))||0; }catch(e){}
 const today=()=>Math.floor(Date.now()/DAY)+simDay;
 const saveSrs=()=>{ writeJSON(SRS_KEY,srs); cloudSaveDebounced(); };
-for(let i=0;i<done;i++){ if(!(i in srs)) srs[i]={stars:0,due:today()}; }  // seed finished levels as due
+LESSONS.forEach(le=>{ if(doneSet.has(le.id)) le.items.forEach(it=>{ if(!(it.id in srs)) srs[it.id]={stars:0,due:today()}; }); });
 saveSrs();
 
 /* ---- discovery journal: nothing is translated — meanings are inferred, then confirmed ----
@@ -640,9 +664,9 @@ saveSrs();
 const JKEY="hangeul.journal.v1";
 const RIPE_AT = Math.max(1, +(new URLSearchParams(location.search).get("ripe")) || 3);
 let journal=readJSON(JKEY,{});
-// words finished before the journal existed count as read once
-for(let i=0;i<done && i<L.length;i++){ const h=L[i].word;
-  if(!L[i].m2 && WORD_BANK.some(b=>b.han===h) && !journal[h]) journal[h]={seen:1,got:null}; }
+// words in already-completed lessons count as read once
+LESSONS.forEach(le=>{ if(!doneSet.has(le.id)) return;
+  le.items.forEach(it=>{ if(!it.m2 && WORD_BANK.some(b=>b.han===it.word) && !journal[it.word]) journal[it.word]={seen:1,got:null}; }); });
 const saveJournal=()=>{ writeJSON(JKEY,journal); cloudSaveDebounced(); };
 const gotMean = han => (journal[han]&&journal[han].got)||null;
 const journalCounts=()=>{ let g=0; for(const h in journal) if(journal[h].got) g++;
@@ -696,7 +720,8 @@ function showGuess(han, cont){                 // asked inside the celebrate vei
   });
 }
 let mistakes=0, reviewMode=false, reviewQueue=[], reviewPos=0;
-const dueNow=()=>Object.keys(srs).map(Number).filter(i=>srs[i].due<=today());
+let lessonMode=false, lessonIdx=-1, lesson=[], lessonPos=0;   // lesson = L-indices of its items
+const dueNow=()=>Object.keys(srs).filter(id=>byId[id]!=null && srs[id].due<=today());
 
 const CHECK='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const LOCK='<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M17 9V7a5 5 0 0 0-10 0v2H6a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10a1 1 0 0 0-1-1h-1zM9 7a3 3 0 0 1 6 0v2H9V7z"/></svg>';
@@ -735,7 +760,7 @@ document.getElementById("traceDone").onclick=()=>traceVeil.classList.remove("sho
 
 /* ---------- level select (cannot skip) ---------- */
 function showMap(){
-  screen="map"; reviewMode=false; backBtn.hidden=true; acctBtn.hidden=!sb; stage.classList.add("map-mode");
+  screen="map"; reviewMode=false; lessonMode=false; backBtn.hidden=true; acctBtn.hidden=!sb; stage.classList.add("map-mode");
   const due=dueNow(), doneToday=streak.day===today();
   const rc=`<div class="review-card">
       <div class="streak" title="day streak">${FLAME}<span>${streak.count}</span></div>
@@ -754,16 +779,14 @@ function showMap(){
     </button>
     <div class="dev"><button id="nextDay">day +1 (test)</button></div>`;
   let h=rc+'<div class="map">';
-  L.forEach((lv,i)=>{
-    const st = i<done ? "done" : i===done ? "current" : "locked";
+  LESSONS.forEach((le,i)=>{
+    const st = lessonState(i);
     const badge = st==="done"?`<span class="badge">${CHECK}</span>`
                 : st==="locked"?`<span class="badge lock">${LOCK}</span>`:``;
-    const s = (i in srs)?srs[i].stars:-1;
-    const stars = s>=0?`<div class="node-stars">${[0,1,2].map(k=>`<span class="${k<s?'on':'off'}">${STAR}</span>`).join("")}</div>`:``;
     h+=`<div class="node ${st}">
       <button class="node-btn" ${st==="locked"?"disabled":`data-i="${i}"`}>
-        <span class="node-em">${lv.emoji}</span>${badge}</button>
-      <span class="node-num">${i+1}</span>${stars}
+        <span class="node-em">${lessonEmoji(le)}</span>${badge}</button>
+      <span class="node-num">${i+1}</span>
     </div>`;
   });
   SOON.forEach(s=>{ h+=`<div class="node locked">
@@ -771,7 +794,7 @@ function showMap(){
       <span class="node-num">soon</span>
     </div>`; });
   stage.innerHTML=h+'</div>';
-  stage.querySelectorAll(".node-btn[data-i]").forEach(b=>b.onclick=()=>showLevel(+b.dataset.i));
+  stage.querySelectorAll(".node-btn[data-i]").forEach(b=>b.onclick=()=>startLesson(+b.dataset.i));
   const rb=document.getElementById("reviewBtn"); if(rb) rb.onclick=startReview;
   document.getElementById("journalBtn").onclick=showJournal;
   document.getElementById("nextDay").onclick=()=>{ simDay++; try{localStorage.setItem(SIM_KEY,simDay);}catch(e){} showMap(); };
@@ -779,8 +802,59 @@ function showMap(){
   else { const cur=stage.querySelector(".node.current")||stage.querySelector(".node.done:last-of-type");
          if(cur) cur.scrollIntoView({block:"center"}); }
 }
-function showLevel(i){ idx=i; screen="play"; reviewMode=false; backBtn.hidden=false; acctBtn.hidden=true; stage.classList.remove("map-mode"); renderPlay(); }
-backBtn.onclick=showMap;
+/* ---------- the lesson runner: a fast burst of items, one reward at the end ---------- */
+function startLesson(i){
+  lessonIdx=i; lesson=LESSONS[i].items.map(it=>byId[it.id]); lessonPos=0;
+  screen="play"; reviewMode=false; lessonMode=true; backBtn.hidden=false; acctBtn.hidden=true;
+  stage.classList.remove("map-mode");
+  playLessonItem();
+}
+function playLessonItem(){ idx=lesson[lessonPos]; renderPlay(); }   // renderPlay dispatches to renderM2
+function lessonBar(){
+  if(!lessonMode) return "";
+  return `<div class="lesson-bar">${lesson.map((_,k)=>
+    `<span class="lb ${k<lessonPos?'done':k===lessonPos?'now':''}"></span>`).join("")}</div>`;
+}
+// solved one item inside a lesson: record it, then slide to the next (no full reward)
+function itemSolved(){
+  const lv=L[idx];
+  bumpJournal(lv);
+  if(!(lv.id in srs)){ srs[lv.id]={stars:0,due:today()+1}; saveSrs(); }   // enters the review queue
+  lessonPos++;
+  setTimeout(()=> lessonPos<lesson.length ? playLessonItem() : completeLesson(), 480);
+}
+function completeLesson(){
+  const le=LESSONS[lessonIdx], fresh=!doneSet.has(le.id);
+  doneSet.add(le.id); saveDone();
+  const t=today();
+  if(streak.day!==t){ streak.count = streak.day===t-1 ? streak.count+1 : 1; streak.day=t; writeJSON(STREAK_KEY,streak); cloudSaveDebounced(); }
+  const goNext = fresh && lessonIdx+1 < LESSONS.length;
+  // at most one discovery per lesson (prefer a word from this lesson), keeps the tempo
+  const isRipe=h=>{ const j=journal[h]; return j&&!j.got&&(j.seen||0)>=RIPE_AT&&(j.cool||0)<=(j.seen||0); };
+  const ripe = le.items.filter(it=>!it.m2).map(it=>it.word).find(isRipe) || nextRipe(null);
+  audio.win(); burst();
+  veil.classList.add("show");
+  panel.animate([{transform:"translateY(100%)"},{transform:"translateY(0)"}],{duration:340,easing:"cubic-bezier(.2,.8,.2,1)"});
+  if(ripe) showGuess(ripe, ()=>lessonReward(goNext)); else lessonReward(goNext);
+}
+function lessonReward(goNext){
+  const le=LESSONS[lessonIdx];
+  const chips = le.items.map(it=>`<span class="recap"><b>${wordFor(byId[it.id])}</b>${it.emoji?` ${it.emoji}`:""}</span>`).join("");
+  const last = le.items[le.items.length-1];
+  panel.innerHTML=`
+    <div class="p-emoji" id="pEmoji">✨</div>
+    <div class="word">lesson done</div>
+    <div class="recap-row">${chips}</div>
+    ${!last.m2?`<div class="trace-row"><button class="trace-btn" id="traceBtn">${PENCIL}<span>trace it</span></button></div>`:``}
+    <button class="cta">${goNext?"next lesson →":"back to map"}</button>`;
+  panel.querySelector("#pEmoji").animate([{transform:"scale(0)"},{transform:"scale(1.15)"},{transform:"scale(1)"}],{duration:460,delay:80,easing:"cubic-bezier(.22,1,.36,1)",fill:"backwards"});
+  const tb=panel.querySelector("#traceBtn"); if(tb) tb.onclick=()=>openTrace(wordFor(byId[last.id]));
+  panel.querySelector(".cta").onclick=()=>{
+    veil.classList.remove("show"); lessonMode=false;
+    if(goNext) startLesson(lessonIdx+1); else showMap();
+  };
+}
+backBtn.onclick=()=>{ lessonMode=false; showMap(); };
 
 /* the dictionary the learner wrote — only self-discovered meanings, newest first */
 function showJournal(){
@@ -806,10 +880,10 @@ function showJournal(){
 }
 
 /* daily review: replay whatever's due (hints off); clean recalls earn stars */
-function startReview(){ reviewQueue=dueNow(); reviewPos=0; if(!reviewQueue.length) return; reviewMode=true; nextReview(); }
+function startReview(){ reviewQueue=dueNow(); reviewPos=0; if(!reviewQueue.length) return; reviewMode=true; lessonMode=false; nextReview(); }
 function nextReview(){
   if(reviewPos>=reviewQueue.length){ finishReview(); return; }
-  idx=reviewQueue[reviewPos]; screen="play"; backBtn.hidden=false; acctBtn.hidden=true; stage.classList.remove("map-mode"); renderPlay();
+  idx=byId[reviewQueue[reviewPos]]; screen="play"; backBtn.hidden=false; acctBtn.hidden=true; stage.classList.remove("map-mode"); renderPlay();
 }
 function finishReview(){
   reviewMode=false;
@@ -838,6 +912,7 @@ function renderPlay(){
     ${idx===0?`<p class="instr">drag the letters to build it</p>`:``}
     <div class="blocks" id="blocks"></div>
     <div class="tray" id="tray"></div>`;
+  stage.insertAdjacentHTML("afterbegin", lessonBar());
 
   const blocksEl = document.getElementById("blocks");
   lv.blocks.forEach((blk,bi)=>{
@@ -905,6 +980,7 @@ function renderM2(lv){
     <p class="instr">drag the words into the right order</p>
     <div class="sentence" id="sentence"></div>
     <div class="tray" id="tray"></div>`;
+  stage.insertAdjacentHTML("afterbegin", lessonBar());
   const sen=document.getElementById("sentence");
   lv.seq.forEach(([w])=>{
     const s=document.createElement("div"); s.className="slot word"; s.dataset.jamo=w; sen.appendChild(s);
@@ -1000,51 +1076,37 @@ function checkSolved(){
     b.classList.add("solved");
     b.animate([{transform:"scale(1)"},{transform:"scale(1.06)"},{transform:"scale(1)"}],{duration:420,easing:"ease-out"});
   });
-  setTimeout(celebrate,380);
+  setTimeout(()=> lessonMode ? itemSolved() : celebrate(), 380);
 }
+/* celebrate is now the DAILY-REVIEW reward only; fresh learning runs through the lesson runner */
 function celebrate(){
   const lv=L[idx];
   const word = wordFor(idx);            // real composed Unicode syllable(s)
   audio.win(); burst(); speak(word);
+  bumpJournal(lv);                      // a review is still an exposure
   let starEarned=false;
-  const freshFrontier = !reviewMode && idx===done;   // completing the newest level, not a replay
-  if(reviewMode){                       // a spaced review: clean recall pushes it out + a star
-    const it = srs[idx] || {stars:0,due:today()};
-    if(mistakes===0){ it.stars=Math.min(3,it.stars+1); it.due=today()+DUE_BY_STARS[it.stars]; starEarned=true; }
-    else { it.due=today()+1; }          // fumbled — see it again tomorrow, stars held
-    srs[idx]=it; saveSrs();
-  } else {                              // first time through: unlock next, enter the queue
-    done = Math.max(done, idx+1); saveProgress();
-    if(!(idx in srs)){ srs[idx]={stars:0,due:today()+1}; saveSrs(); }
-  }
-  const moreReview = reviewMode && reviewPos+1 < reviewQueue.length;
-  const goNext = freshFrontier && idx+1 < L.length;  // auto-advance while moving the frontier forward
-  bumpJournal(lv);                                   // this play = one exposure for each word in it
-  // nothing is translated: the English shows only once YOU have discovered it
+  const it = srs[lv.id] || {stars:0,due:today()};
+  if(mistakes===0){ it.stars=Math.min(3,it.stars+1); it.due=today()+DUE_BY_STARS[it.stars]; starEarned=true; }
+  else { it.due=today()+1; }            // fumbled — see it again tomorrow, stars held
+  srs[lv.id]=it; saveSrs();
+  const moreReview = reviewPos+1 < reviewQueue.length;
   const meanBit = lv.m2 ? "" : (gotMean(lv.word) ? ` · <b>${lv.mean}</b>` : ` · <b class="undisc">?</b>`);
   panel.innerHTML = `
     <div class="p-emoji" id="pEmoji">${lv.emoji}</div>
     <div class="word">${word}</div>
     <div class="roma">${lv.roma}${meanBit}</div>
-    <div class="tag">${reviewMode?(starEarned?"★ clean recall — star earned":"seen again — you'll get it"):lv.tag}</div>
-    ${(!lv.m2 && !reviewMode)?`<div class="trace-row"><button class="trace-btn" id="traceBtn">${PENCIL}<span>trace it</span></button></div>`:``}
+    <div class="tag">${starEarned?"★ clean recall — star earned":"seen again — you'll get it"}</div>
     ${canSpeak()?`<div class="say-row">
       <button class="mic" id="micBtn">${MIC_SVG}<span class="mic-label">say it</span></button>
       <div class="say-feedback" id="sayFb"></div>
     </div>`:``}
-    <button class="cta">${reviewMode?(moreReview?"next →":"done ✓"):(goNext?"next →":"continue →")}</button>`;
+    <button class="cta">${moreReview?"next →":"done ✓"}</button>`;
   panel.querySelector("#pEmoji").animate(
     [{transform:"scale(0)"},{transform:"scale(1.15)"},{transform:"scale(1)"}],
     {duration:460,delay:120,easing:"cubic-bezier(.22,1,.36,1)",fill:"backwards"});
   wireSayIt(word);   // M4: optional speaking check (parked)
-  const tb=panel.querySelector("#traceBtn"); if(tb) tb.onclick=()=>openTrace(word);
   panel.querySelector(".cta").onclick=()=>{
-    const cont=()=>{
-      veil.classList.remove("show");
-      if(reviewMode){ reviewPos++; nextReview(); }
-      else if(goNext){ showLevel(idx+1); }   // straight into the next level, keep the flow
-      else showMap();                        // a replay or the last level → back to the hub
-    };
+    const cont=()=>{ veil.classList.remove("show"); reviewPos++; nextReview(); };
     const ripe=nextRipe(lv.m2?null:lv.word); // a meaning ready to be guessed? ask before moving on
     if(ripe) showGuess(ripe, cont); else cont();
   };
@@ -1093,6 +1155,11 @@ showMap();
   });
   console.assert(L.length===WORD_BANK.length+M2.length, "curriculum interleaves all levels");
   console.assert(L.slice(0,4).some(l=>l.m2), "a sentence arrives within the first four levels");
+  // lessons + stable ids: every item has a unique id, lessons cover L exactly, ids are stable
+  const ids=new Set(L.map(it=>it.id)); console.assert(ids.size===L.length, "item ids unique");
+  console.assert(LESSONS.reduce((n,le)=>n+le.items.length,0)===L.length, "lessons cover every item once");
+  console.assert(LESSONS.every(le=>le.items.length<=LESSON_MAX), "no lesson exceeds LESSON_MAX");
+  console.assert(byId["나"]===0 && L[byId["s:나_소_봐요"]].m2, "byId maps stable ids to positions");
   // discovery journal: distractors are real, ripeness fires and cools correctly
   const ds=distractorsFor("water");
   console.assert(ds.length===3 && !ds.includes("water"), "journal distractors");
@@ -1132,7 +1199,7 @@ async function submitAuth(){
   err.textContent=""; closeAuth();
 }
 async function cloudSave(){ if(!sb||!user) return;
-  try{ await sb.from("progress").upsert({user_id:user.id, data:{done,srs,streak,journal}, updated_at:new Date().toISOString()}); }catch(e){}
+  try{ await sb.from("progress").upsert({user_id:user.id, data:{doneLessons:[...doneSet],srs,streak,journal}, updated_at:new Date().toISOString()}); }catch(e){}
 }
 async function cloudLoad(){ if(!sb||!user) return;
   try{
@@ -1140,8 +1207,9 @@ async function cloudLoad(){ if(!sb||!user) return;
     if(error){ return; }
     if(!data){ cloudSave(); return; }                 // first login on this account -> push local up
     const c=data.data||{}; let changed=false;
-    if((c.done||0)>done){ done=c.done; try{localStorage.setItem(PKEY,String(done));}catch(e){} changed=true; }
-    if(c.srs){ for(const k in c.srs){ const cl=c.srs[k], loc=srs[k]; if(!loc||(cl.stars||0)>(loc.stars||0)){ srs[k]=cl; changed=true; } } }
+    if(Array.isArray(c.doneLessons)){ const n=doneSet.size; c.doneLessons.forEach(id=>doneSet.add(id));
+      if(doneSet.size>n){ writeJSON(DONE_KEY,[...doneSet]); changed=true; } }
+    if(c.srs){ for(const k in c.srs){ if(byId[k]==null) continue; const cl=c.srs[k], loc=srs[k]; if(!loc||(cl.stars||0)>(loc.stars||0)){ srs[k]=cl; changed=true; } } }
     if(c.streak && (c.streak.count||0)>streak.count){ streak=c.streak; writeJSON(STREAK_KEY,streak); changed=true; }
     if(c.journal){ for(const h in c.journal){ const cl=c.journal[h], lo=journal[h];
       journal[h]={ seen:Math.max(cl.seen||0, lo?.seen||0),
@@ -1149,7 +1217,7 @@ async function cloudLoad(){ if(!sb||!user) return;
                    day:(lo&&lo.day)||cl.day, cool:Math.max(cl.cool||0, lo?.cool||0) };
       changed=true; }
       writeJSON(JKEY,journal); }
-    for(let i=0;i<done;i++){ if(!(i in srs)) srs[i]={stars:0,due:today()}; }   // seed any newly-unlocked levels
+    LESSONS.forEach(le=>{ if(doneSet.has(le.id)) le.items.forEach(it=>{ if(!(it.id in srs)) srs[it.id]={stars:0,due:today()}; }); });
     writeJSON(SRS_KEY,srs); cloudSave();
     if(changed && screen==="map") showMap();
   }catch(e){}
