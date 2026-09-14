@@ -96,6 +96,31 @@
   .rc-go{flex:none;border:0;background:var(--accent);color:#fff;font:inherit;font-weight:700;font-size:13px;
     padding:10px 18px;border-radius:11px;cursor:pointer;transition:transform .12s}
   .rc-go:active{transform:scale(.94)}
+  /* discovery journal: the dictionary the learner writes themselves */
+  .journal-card{display:flex;align-items:center;gap:11px;width:100%;max-width:330px;margin:0 auto 6px;
+    background:var(--tile);border:0;border-radius:16px;box-shadow:var(--shadow);padding:12px 15px;
+    font:inherit;text-align:left;cursor:pointer;transition:transform .12s}
+  .journal-card:active{transform:scale(.97)}
+  .jc-book{font-size:21px;flex:none}
+  .jc-title{font-weight:700;font-size:14px}
+  .jc-sub{font-size:12px;color:var(--muted);margin-top:1px}
+  .journal{width:100%;max-width:330px;margin:0 auto;display:flex;flex-direction:column;gap:8px;padding-bottom:30px}
+  .journal h2{font-size:17px;margin:6px 0 0;text-align:center}
+  .journal .j-sub{font-size:12.5px;color:var(--muted);text-align:center;margin:0 0 8px}
+  .jrow{display:flex;align-items:center;gap:12px;background:var(--tile);border-radius:14px;
+    box-shadow:var(--shadow);padding:10px 14px;cursor:pointer}
+  .jrow .jh{font-size:22px;font-weight:700}
+  .jrow .je{font-size:19px}
+  .jrow .jm{margin-left:auto;font-size:14px;color:var(--muted);font-weight:600}
+  .j-locked{text-align:center;font-size:12.5px;color:var(--muted);margin-top:10px}
+  .undisc{color:#c9c7bf}
+  /* the guess moment */
+  .guess-q{font-size:15px;color:var(--muted);text-align:center;margin:2px 0 0}
+  .guess-han{font-size:52px;font-weight:800;text-align:center;cursor:pointer;line-height:1.15}
+  .choices{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}
+  .choice{border:1.5px solid var(--line);background:#fff;border-radius:13px;padding:13px 8px;
+    font:inherit;font-weight:700;font-size:15px;cursor:pointer;transition:transform .1s,border-color .15s}
+  .choice:active{transform:scale(.95)}
   .dev{width:100%;max-width:330px;margin:0 auto 14px;text-align:right}
   .dev button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:11px;cursor:pointer;text-decoration:underline;opacity:.55}
 
@@ -584,6 +609,68 @@ const today=()=>Math.floor(Date.now()/DAY)+simDay;
 const saveSrs=()=>{ writeJSON(SRS_KEY,srs); cloudSaveDebounced(); };
 for(let i=0;i<done;i++){ if(!(i in srs)) srs[i]={stars:0,due:today()}; }  // seed finished levels as due
 saveSrs();
+
+/* ---- discovery journal: nothing is translated — meanings are inferred, then confirmed ----
+   { han: {seen, got, day, cool} }. A word "ripens" after RIPE_AT exposures; the app then asks
+   what YOU think it means. Right -> it enters your journal. Wrong -> no reveal, it comes back. */
+const JKEY="hangeul.journal.v1";
+const RIPE_AT = Math.max(1, +(new URLSearchParams(location.search).get("ripe")) || 3);
+let journal=readJSON(JKEY,{});
+// words finished before the journal existed count as read once
+for(let i=0;i<done && i<L.length;i++){ const h=L[i].word;
+  if(!L[i].m2 && WORD_BANK.some(b=>b.han===h) && !journal[h]) journal[h]={seen:1,got:null}; }
+const saveJournal=()=>{ writeJSON(JKEY,journal); cloudSaveDebounced(); };
+const gotMean = han => (journal[han]&&journal[han].got)||null;
+const journalCounts=()=>{ let g=0; for(const h in journal) if(journal[h].got) g++;
+  return {got:g, total:WORD_BANK.length}; };
+function bumpJournal(lv){                      // one exposure per word in the level just solved
+  const ws = lv.m2 ? lv.seq.map(s=>s[0]) : [lv.word];
+  ws.forEach(h=>{ if(!WORD_BANK.some(b=>b.han===h)) return;
+    const j=journal[h]||(journal[h]={seen:0,got:null});
+    j.seen=(j.seen||0)+1; });
+  saveJournal();
+}
+function nextRipe(preferHan){                  // the word whose meaning is ready to be guessed
+  const ripe = h => { const j=journal[h];
+    return j && !j.got && (j.seen||0)>=RIPE_AT && (j.cool||0)<=(j.seen||0); };
+  if(preferHan && ripe(preferHan)) return preferHan;
+  return Object.keys(journal).find(ripe) || null;
+}
+function distractorsFor(mean){
+  return shuffle(WORD_BANK.map(w=>w.mean).filter(m=>m!==mean)).slice(0,3);
+}
+function showGuess(han, cont){                 // asked inside the celebrate veil; no reveal on miss
+  const w=WORD_BANK.find(b=>b.han===han); if(!w){ cont(); return; }
+  const opts=shuffle([w.mean, ...distractorsFor(w.mean)]);
+  panel.innerHTML=`
+    <div class="guess-q">you've read this a few times now…</div>
+    <div class="guess-han" id="guessHan">${han}</div>
+    <div class="guess-q"><b>what do you think it means?</b></div>
+    <div class="choices">${opts.map(o=>`<button class="choice" data-m="${o}">${o}</button>`).join("")}</div>`;
+  document.getElementById("guessHan").onclick=()=>speak(han);
+  speak(han);
+  panel.querySelectorAll(".choice").forEach(b=>b.onclick=()=>{
+    const j=journal[han];
+    if(b.dataset.m===w.mean){
+      j.got=w.mean; j.day=today(); saveJournal();
+      audio.win(); burst();
+      panel.innerHTML=`
+        <div class="p-emoji">📖</div>
+        <div class="word">${han} = ${w.mean}</div>
+        <div class="tag">you figured it out yourself — added to your journal</div>
+        <button class="cta">continue →</button>`;
+    } else {
+      j.cool=(j.seen||0)+2; saveJournal();     // no reveal — it ripens again after 2 more reads
+      try{ audio.err(); }catch(e){}
+      panel.innerHTML=`
+        <div class="p-emoji">🤫</div>
+        <div class="word">not yet</div>
+        <div class="tag">keep reading — it'll come back when you're ready</div>
+        <button class="cta">continue →</button>`;
+    }
+    panel.querySelector(".cta").onclick=cont;
+  });
+}
 let mistakes=0, reviewMode=false, reviewQueue=[], reviewPos=0;
 const dueNow=()=>Object.keys(srs).map(Number).filter(i=>srs[i].due<=today());
 
@@ -634,6 +721,13 @@ function showMap(){
       </div>
       ${(!doneToday&&due.length)?`<button class="rc-go" id="reviewBtn">review</button>`:``}
     </div>
+    <button class="journal-card" id="journalBtn">
+      <span class="jc-book">📖</span>
+      <span class="jc-main">
+        <div class="jc-title">Your dictionary</div>
+        <div class="jc-sub">${(c=>c.got?`${c.got} word${c.got>1?"s":""} you figured out yourself`:"figure out meanings by reading — they collect here")(journalCounts())}</div>
+      </span>
+    </button>
     <div class="dev"><button id="nextDay">day +1 (test)</button></div>`;
   let h=rc+'<div class="map">';
   L.forEach((lv,i)=>{
@@ -655,6 +749,7 @@ function showMap(){
   stage.innerHTML=h+'</div>';
   stage.querySelectorAll(".node-btn[data-i]").forEach(b=>b.onclick=()=>showLevel(+b.dataset.i));
   const rb=document.getElementById("reviewBtn"); if(rb) rb.onclick=startReview;
+  document.getElementById("journalBtn").onclick=showJournal;
   document.getElementById("nextDay").onclick=()=>{ simDay++; try{localStorage.setItem(SIM_KEY,simDay);}catch(e){} showMap(); };
   if(!doneToday && due.length){ stage.scrollTop=0; }   // keep the review CTA visible when it matters
   else { const cur=stage.querySelector(".node.current")||stage.querySelector(".node.done:last-of-type");
@@ -662,6 +757,29 @@ function showMap(){
 }
 function showLevel(i){ idx=i; screen="play"; reviewMode=false; backBtn.hidden=false; acctBtn.hidden=true; stage.classList.remove("map-mode"); renderPlay(); }
 backBtn.onclick=showMap;
+
+/* the dictionary the learner wrote — only self-discovered meanings, newest first */
+function showJournal(){
+  screen="journal"; backBtn.hidden=false; acctBtn.hidden=true; stage.classList.add("map-mode");
+  const entries=Object.keys(journal).filter(h=>journal[h].got)
+    .sort((a,b)=>(journal[b].day||0)-(journal[a].day||0));
+  const {got,total}=journalCounts();
+  let h=`<div class="journal">
+    <h2>📖 Your dictionary</h2>
+    <p class="j-sub">${got} / ${total} — every meaning here is one <b>you</b> figured out</p>`;
+  if(!entries.length)
+    h+=`<p class="j-sub">nothing yet — keep reading. When you've seen a word enough times,
+        the app will ask what you think it means.</p>`;
+  entries.forEach(han=>{
+    const w=WORD_BANK.find(b=>b.han===han); if(!w) return;
+    h+=`<div class="jrow" data-h="${han}">
+      <span class="jh">${han}</span><span class="je">${w.emoji}</span>
+      <span class="jm">${journal[han].got}</span></div>`;
+  });
+  if(got<total) h+=`<p class="j-locked">${total-got} more words are hiding in the levels — keep reading</p>`;
+  stage.innerHTML=h+`</div>`;
+  stage.querySelectorAll(".jrow").forEach(r=>r.onclick=()=>speak(r.dataset.h));
+}
 
 /* daily review: replay whatever's due (hints off); clean recalls earn stars */
 function startReview(){ reviewQueue=dueNow(); reviewPos=0; if(!reviewQueue.length) return; reviewMode=true; nextReview(); }
@@ -755,7 +873,6 @@ function renderM2(lv){
   stage.innerHTML=`
     <div class="goal">
       <div class="seq">${lv.seq.map(s=>`<span>${s[1]}</span>`).join("")}</div>
-      <div class="m2-gloss">${lv.mean}</div>
       <div class="goal-say">
         <span class="goal-roma">${lv.roma}</span>
         <button class="say-btn" id="sayBtn" aria-label="Hear it out loud"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M15.5 8.5a4 4 0 0 1 0 7"/><path d="M18.5 6a7 7 0 0 1 0 12"/></svg></button>
@@ -878,10 +995,13 @@ function celebrate(){
   }
   const moreReview = reviewMode && reviewPos+1 < reviewQueue.length;
   const goNext = freshFrontier && idx+1 < L.length;  // auto-advance while moving the frontier forward
+  bumpJournal(lv);                                   // this play = one exposure for each word in it
+  // nothing is translated: the English shows only once YOU have discovered it
+  const meanBit = lv.m2 ? "" : (gotMean(lv.word) ? ` · <b>${lv.mean}</b>` : ` · <b class="undisc">?</b>`);
   panel.innerHTML = `
     <div class="p-emoji" id="pEmoji">${lv.emoji}</div>
     <div class="word">${word}</div>
-    <div class="roma">${lv.roma} · <b>${lv.mean}</b></div>
+    <div class="roma">${lv.roma}${meanBit}</div>
     <div class="tag">${reviewMode?(starEarned?"★ clean recall — star earned":"seen again — you'll get it"):lv.tag}</div>
     ${(!lv.m2 && !reviewMode)?`<div class="trace-row"><button class="trace-btn" id="traceBtn">${PENCIL}<span>trace it</span></button></div>`:``}
     ${canSpeak()?`<div class="say-row">
@@ -895,10 +1015,14 @@ function celebrate(){
   wireSayIt(word);   // M4: optional speaking check (parked)
   const tb=panel.querySelector("#traceBtn"); if(tb) tb.onclick=()=>openTrace(word);
   panel.querySelector(".cta").onclick=()=>{
-    veil.classList.remove("show");
-    if(reviewMode){ reviewPos++; nextReview(); }
-    else if(goNext){ showLevel(idx+1); }   // straight into the next level, keep the flow
-    else showMap();                        // a replay or the last level → back to the hub
+    const cont=()=>{
+      veil.classList.remove("show");
+      if(reviewMode){ reviewPos++; nextReview(); }
+      else if(goNext){ showLevel(idx+1); }   // straight into the next level, keep the flow
+      else showMap();                        // a replay or the last level → back to the hub
+    };
+    const ripe=nextRipe(lv.m2?null:lv.word); // a meaning ready to be guessed? ask before moving on
+    if(ripe) showGuess(ripe, cont); else cont();
   };
   veil.classList.add("show");
   panel.animate([{transform:"translateY(100%)"},{transform:"translateY(0)"}],{duration:340,easing:"cubic-bezier(.2,.8,.2,1)"});
@@ -937,6 +1061,14 @@ showMap();
     const have = lv.tray.map(t=>t.split("|")[0]);
     need.forEach(j=>console.assert(have.includes(j), `L${i} (${lv.word}): tray missing ${j}`));
   });
+  // discovery journal: distractors are real, ripeness fires and cools correctly
+  const ds=distractorsFor("water");
+  console.assert(ds.length===3 && !ds.includes("water"), "journal distractors");
+  { const bak=journal; journal={"물":{seen:RIPE_AT,got:null}};
+    console.assert(nextRipe("물")==="물", "ripe at threshold");
+    journal["물"].cool=RIPE_AT+2;
+    console.assert(nextRipe("물")===null, "cooldown holds after a miss");
+    journal=bak; }
   // M4 speech matching: forgiving but not blind
   console.assert(heardMatch(["물"],"물") && heardMatch(["물 있어요"],"물 있어요"), "M4 accepts exact");
   console.assert(heardMatch(["물이요"],"물"), "M4 accepts close");
@@ -968,7 +1100,7 @@ async function submitAuth(){
   err.textContent=""; closeAuth();
 }
 async function cloudSave(){ if(!sb||!user) return;
-  try{ await sb.from("progress").upsert({user_id:user.id, data:{done,srs,streak}, updated_at:new Date().toISOString()}); }catch(e){}
+  try{ await sb.from("progress").upsert({user_id:user.id, data:{done,srs,streak,journal}, updated_at:new Date().toISOString()}); }catch(e){}
 }
 async function cloudLoad(){ if(!sb||!user) return;
   try{
@@ -979,6 +1111,12 @@ async function cloudLoad(){ if(!sb||!user) return;
     if((c.done||0)>done){ done=c.done; try{localStorage.setItem(PKEY,String(done));}catch(e){} changed=true; }
     if(c.srs){ for(const k in c.srs){ const cl=c.srs[k], loc=srs[k]; if(!loc||(cl.stars||0)>(loc.stars||0)){ srs[k]=cl; changed=true; } } }
     if(c.streak && (c.streak.count||0)>streak.count){ streak=c.streak; writeJSON(STREAK_KEY,streak); changed=true; }
+    if(c.journal){ for(const h in c.journal){ const cl=c.journal[h], lo=journal[h];
+      journal[h]={ seen:Math.max(cl.seen||0, lo?.seen||0),
+                   got:(lo&&lo.got)||cl.got||null,
+                   day:(lo&&lo.day)||cl.day, cool:Math.max(cl.cool||0, lo?.cool||0) };
+      changed=true; }
+      writeJSON(JKEY,journal); }
     for(let i=0;i<done;i++){ if(!(i in srs)) srs[i]={stars:0,due:today()}; }   // seed any newly-unlocked levels
     writeJSON(SRS_KEY,srs); cloudSave();
     if(changed && screen==="map") showMap();
