@@ -422,12 +422,31 @@ const FILL_LATER=[ {noun:"물",pat:PATTERN}, {noun:"나무",pat:PATTERN}, {noun:
 // M2 leads sentences: drag ready-made word tiles into Korean order (SOV). Verbs are
 // 요-forms with combined emojis (person + food = eat), no spelling. The pattern repeats
 // so word order and each verb are learned by seeing, never by being told.
+/* Each sentence slots into the curriculum right after the last word it needs, so words
+   get USED almost as soon as they're learned. Verbs (봐요/마셔요/먹어요/자요) are never in
+   the word bank — their meaning is inferred from the emoji doing its job in the sentence. */
 const M2=[
-  { seq:[["나","🙋"],["물","💧"],["마셔요","🥤"]], mean:"I drink water", emoji:"🥤", decoy:"개" },
-  { seq:[["나","🙋"],["밥","🍚"],["먹어요","😋"]], mean:"I eat rice",   emoji:"😋", decoy:"소" },
-  { seq:[["나","🙋"],["고기","🍖"],["먹어요","😋"]], mean:"I eat meat",  emoji:"🍖", decoy:"물" },
-  { seq:[["나","🙋"],["소","🐮"],["봐요","👀"]], mean:"I see a cow",    emoji:"👀", decoy:"밥" },
+  { seq:[["나","🙋"],["소","🐮"],["봐요","👀"]],      mean:"I see a cow",              emoji:"👀", decoy:"코" },
+  { seq:[["나","🙋"],["해","☀️"],["봐요","👀"]],      mean:"I see the sun",            emoji:"☀️", decoy:"비" },
+  { seq:[["나","🙋"],["우유","🥛"],["마셔요","🥤"]],  mean:"I drink milk",             emoji:"🥛", decoy:"게" },
+  { seq:[["나","🙋"],["별","⭐"],["봐요","👀"]],      mean:"I see a star",             emoji:"⭐", decoy:"그림" },
+  { seq:[["나","🙋"],["물","💧"],["마셔요","🥤"]],    mean:"I drink water",            emoji:"🥤", decoy:"개" },
+  { seq:[["개","🐶"],["물","💧"],["마셔요","🥤"]],    mean:"the dog drinks water",     emoji:"🐶", decoy:"나" },
+  { seq:[["나","🙋"],["달","🌙"],["봐요","👀"]],      mean:"I see the moon",           emoji:"🌙", decoy:"불" },
+  { seq:[["나","🙋"],["밥","🍚"],["먹어요","😋"]],    mean:"I eat rice",               emoji:"😋", decoy:"소" },
+  { seq:[["나","🙋"],["딸기","🍓"],["먹어요","😋"]],  mean:"I eat a strawberry",       emoji:"🍓", decoy:"물" },
+  { seq:[["토끼","🐰"],["딸기","🍓"],["먹어요","😋"]],mean:"the rabbit eats a strawberry", emoji:"🐰", decoy:"나" },
+  { seq:[["나","🙋"],["빵","🍞"],["먹어요","😋"]],    mean:"I eat bread",              emoji:"🍞", decoy:"밥" },
+  { seq:[["나","🙋"],["바다","🌊"],["봐요","👀"]],    mean:"I see the sea",            emoji:"🌊", decoy:"나무" },
+  { seq:[["나","🙋"],["고기","🍖"],["먹어요","😋"]],  mean:"I eat meat",               emoji:"🍖", decoy:"물" },
+  { seq:[["아기","👶"],["자요","😴"]],               mean:"the baby sleeps",          emoji:"😴", decoy:"엄마" },
+  { seq:[["나","🙋"],["김치","🥬"],["먹어요","😋"]],  mean:"I eat kimchi",             emoji:"🥬", decoy:"밥" },
+  { seq:[["엄마","👩"],["커피","☕"],["마셔요","🥤"]],mean:"mom drinks coffee",        emoji:"☕", decoy:"아빠" },
+  { seq:[["고양이","🐱"],["우유","🥛"],["마셔요","🥤"]],mean:"the cat drinks milk",    emoji:"🐱", decoy:"개" },
+  { seq:[["새","🐦"],["물","💧"],["마셔요","🥤"]],    mean:"the bird drinks water",    emoji:"🐦", decoy:"고양이" },
+  { seq:[["곰","🐻"],["자요","😴"]],                 mean:"the bear sleeps",          emoji:"😴", decoy:"말" },
 ];
+const M2_VERBS=new Set(["봐요","마셔요","먹어요","자요"]);
 const SOON=[{emoji:"💬"}];   // fill-in-the-blank + more patterns coming
 
 /* ================= the generator: banks -> the whole curriculum ================= */
@@ -453,8 +472,13 @@ function makeM2(m){
 }
 function buildCurriculum(){
   const seen=new Set(), out=[];
-  for(const w of WORD_BANK){ out.push(makeWord(w,seen)); needSetOf(w.han).forEach(j=>seen.add(j)); }
-  for(const m of M2){ out.push(makeM2(m)); }   // sentences are M2 word-tiles now
+  // a sentence appears right after the last word it needs — words get used, fast
+  const wordIdx=Object.fromEntries(WORD_BANK.map((w,i)=>[w.han,i]));
+  const slotOf=m=>Math.max(...m.seq.map(s=>wordIdx[s[0]]).filter(v=>v!=null));
+  WORD_BANK.forEach((w,i)=>{
+    out.push(makeWord(w,seen)); needSetOf(w.han).forEach(j=>seen.add(j));
+    M2.filter(m=>slotOf(m)===i).forEach(m=>out.push(makeM2(m)));
+  });
   return out;
 }
 const L = buildCurriculum();
@@ -1061,6 +1085,14 @@ showMap();
     const have = lv.tray.map(t=>t.split("|")[0]);
     need.forEach(j=>console.assert(have.includes(j), `L${i} (${lv.word}): tray missing ${j}`));
   });
+  // M2 sentences: every noun is a real bank word, verbs are known, decoys are real words
+  M2.forEach((m,k)=>{
+    m.seq.forEach(([w])=>console.assert(
+      M2_VERBS.has(w)||WORD_BANK.some(b=>b.han===w), `M2 #${k}: unknown word ${w}`));
+    console.assert(WORD_BANK.some(b=>b.han===m.decoy), `M2 #${k}: decoy ${m.decoy} not in bank`);
+  });
+  console.assert(L.length===WORD_BANK.length+M2.length, "curriculum interleaves all levels");
+  console.assert(L.slice(0,4).some(l=>l.m2), "a sentence arrives within the first four levels");
   // discovery journal: distractors are real, ripeness fires and cools correctly
   const ds=distractorsFor("water");
   console.assert(ds.length===3 && !ds.includes("water"), "journal distractors");
