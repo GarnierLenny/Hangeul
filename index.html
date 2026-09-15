@@ -1344,5 +1344,9 @@ if(sb){
   sb.auth.getSession().then(({data})=>{ user=data.session?.user||null; updateAcct(); if(user) cloudLoad(); if(screen==="map") showMap(); });
 } else updateAcct();
 </script>
+<!-- Vercel Web Analytics — privacy-friendly page views. Serves only on the Vercel deploy
+     once Web Analytics is enabled for the project; 404s harmlessly elsewhere (e.g. Pages). -->
+<script>window.va=window.va||function(){(window.vaq=window.vaq||[]).push(arguments);};</script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
