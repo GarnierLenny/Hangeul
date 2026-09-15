@@ -135,6 +135,8 @@
   .guess-emoji{font-size:44px;text-align:center;margin:2px 0 -2px}
   .guess-han{font-size:52px;font-weight:800;text-align:center;cursor:pointer;line-height:1.15}
   .choices{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}
+  .choices.col{grid-template-columns:1fr}          /* grammar functions are phrases, stack them */
+  .choices.col .choice{font-weight:600;font-size:14px}
   .choice{border:1.5px solid var(--line);background:#fff;border-radius:13px;padding:13px 8px;
     font:inherit;font-weight:700;font-size:15px;cursor:pointer;transition:transform .1s,border-color .15s}
   .choice:active{transform:scale(.95)}
@@ -462,6 +464,15 @@ const M2=[
   { seq:[["고양이","🐱"],["우유","🥛"],["마셔요","🥤"]],mean:"the cat drinks milk",    emoji:"🐱", decoy:"개" },
   { seq:[["새","🐦"],["물","💧"],["마셔요","🥤"]],    mean:"the bird drinks water",    emoji:"🐦", decoy:"고양이" },
   { seq:[["곰","🐻"],["자요","😴"]],                 mean:"the bear sleeps",          emoji:"😴", decoy:"말" },
+  // ── the topic particle 는 enters as its OWN tile. It clings to the doer every time;
+  //    the learner is never told what it is — after a few, the app asks (grammar by inference).
+  //    subjects are vowel-final so it's always 는 (은/를/을 come later), object stays bare
+  //    so 는 is the only new variable. ──
+  { seq:[["나","🙋"],["는",""],["물","💧"],["마셔요","🥤"]],   mean:"I drink water",        emoji:"🥤", decoy:"밥" },
+  { seq:[["소","🐮"],["는",""],["밥","🍚"],["먹어요","😋"]],   mean:"the cow eats rice",    emoji:"🐮", decoy:"물" },
+  { seq:[["개","🐶"],["는",""],["물","💧"],["마셔요","🥤"]],   mean:"the dog drinks water", emoji:"🐶", decoy:"밥" },
+  { seq:[["고양이","🐱"],["는",""],["우유","🥛"],["마셔요","🥤"]], mean:"the cat drinks milk", emoji:"🐱", decoy:"물" },
+  { seq:[["새","🐦"],["는",""],["밥","🍚"],["먹어요","😋"]],   mean:"the bird eats rice",   emoji:"🐦", decoy:"우유" },
 ];
 const M2_VERBS=new Set(["봐요","마셔요","먹어요","자요"]);
 const SOON=[{emoji:"💬"}];   // fill-in-the-blank + more patterns coming
@@ -704,6 +715,63 @@ function chainGuesses(list, done){
   if(!list.length){ done(); return; }
   showGuess(list[0], ()=> chainGuesses(list.slice(1), done));
 }
+
+/* ---- grammar by inference: the same discovery loop, but for function words & structure.
+   A concept (a particle, a word-order rule…) is never explained. After it has shown up in
+   enough sentences, the app asks what job it does — the learner reasons it out from having
+   watched it behave. Extends to 을/를, 이/가, verb-final order by adding to CONCEPTS. ---- */
+const GKEY="hangeul.grammar.v1";
+let grammar=readJSON(GKEY,{});
+const saveGrammar=()=>{ writeJSON(GKEY,grammar); cloudSaveDebounced(); };
+const CONCEPTS=[
+  { id:"topic-neun", marker:"는", trigger:3,
+    q:"는 latches onto the one doing the action, every time. what do you think it marks?",
+    right:"who or what the sentence is about",
+    wrong:["the word “and”", "where it is happening"] },
+];
+const conceptByMarker={}; CONCEPTS.forEach(c=>conceptByMarker[c.marker]=c);
+function bumpConcepts(lv){                      // a completed sentence is one sighting of its markers
+  if(!lv.m2) return;
+  const words=lv.seq.map(s=>s[0]); let changed=false;
+  CONCEPTS.forEach(c=>{ if(words.includes(c.marker)){
+    const g=grammar[c.id]||(grammar[c.id]={seen:0,got:false}); g.seen=(g.seen||0)+1; changed=true; } });
+  if(changed) saveGrammar();
+}
+const conceptRipe = c => { const g=grammar[c.id];
+  return g && !g.got && (g.seen||0)>=c.trigger && (g.cool||0)<=(g.seen||0); };
+const conceptBatch = n => CONCEPTS.filter(conceptRipe).slice(0, n);
+function showConceptGuess(c, cont){
+  const opts=shuffle([c.right, ...c.wrong]);
+  panel.innerHTML=`
+    <div class="guess-q">you've seen <b>${c.marker}</b> a few times now…</div>
+    <div class="guess-han" id="cMark">${c.marker}</div>
+    <div class="guess-q"><b>${c.q}</b></div>
+    <div class="choices col">${opts.map(o=>`<button class="choice" data-r="${o===c.right?1:0}">${o}</button>`).join("")}</div>`;
+  document.getElementById("cMark").onclick=()=>speak(c.marker);
+  panel.querySelectorAll(".choice").forEach(b=>b.onclick=()=>{
+    const g=grammar[c.id];
+    if(b.dataset.r==="1"){
+      g.got=c.right; g.day=today(); saveGrammar(); audio.win(); burst();
+      panel.innerHTML=`
+        <div class="p-emoji">🧩</div>
+        <div class="word">${c.marker}</div>
+        <div class="tag">you cracked it — ${c.marker} marks <b>${c.right}</b></div>
+        <button class="cta">continue →</button>`;
+    } else {
+      g.cool=(g.seen||0)+1; g.missed=true; saveGrammar(); try{ audio.err(); }catch(e){}
+      panel.innerHTML=`
+        <div class="p-emoji">🤔</div>
+        <div class="word">not quite</div>
+        <div class="tag">keep an eye on where ${c.marker} sits — it'll come back</div>
+        <button class="cta">continue →</button>`;
+    }
+    panel.querySelector(".cta").onclick=cont;
+  });
+}
+function chainConcepts(list, done){
+  if(!list.length){ done(); return; }
+  showConceptGuess(list[0], ()=> chainConcepts(list.slice(1), done));
+}
 function distractorsFor(mean){
   return shuffle(WORD_BANK.map(w=>w.mean).filter(m=>m!==mean)).slice(0,3);
 }
@@ -840,7 +908,7 @@ function lessonBar(){
 // solved one item inside a lesson: record it, then slide to the next (no full reward)
 function itemSolved(){
   const lv=L[idx];
-  bumpJournal(lv);
+  bumpJournal(lv); bumpConcepts(lv);
   if(!(lv.id in srs)){ srs[lv.id]={stars:0,due:today()+1}; saveSrs(); }   // enters the review queue
   lessonPos++;
   setTimeout(()=> lessonPos<lesson.length ? playLessonItem() : completeLesson(), 480);
@@ -855,7 +923,8 @@ function completeLesson(){
   audio.win(); burst();
   veil.classList.add("show");
   panel.animate([{transform:"translateY(100%)"},{transform:"translateY(0)"}],{duration:340,easing:"cubic-bezier(.2,.8,.2,1)"});
-  chainGuesses(ripe, ()=>lessonReward(goNext));
+  // words first, then at most one grammar concept, then the reward
+  chainGuesses(ripe, ()=> chainConcepts(conceptBatch(1), ()=>lessonReward(goNext)));
 }
 function lessonReward(goNext){
   const le=LESSONS[lessonIdx];
@@ -895,6 +964,12 @@ function showJournal(){
       <span class="jm">${journal[han].got}</span></div>`;
   });
   if(got<total) h+=`<p class="j-locked">${total-got} more words are hiding in the levels — keep reading</p>`;
+  const cracked=CONCEPTS.filter(c=>grammar[c.id]&&grammar[c.id].got);
+  if(cracked.length){
+    h+=`<h2 style="margin-top:22px">🧩 Grammar you cracked</h2>`;
+    cracked.forEach(c=>{ h+=`<div class="jrow" data-h="${c.marker}">
+      <span class="jh">${c.marker}</span><span class="jm">${c.right}</span></div>`; });
+  }
   stage.innerHTML=h+`</div>`;
   stage.querySelectorAll(".jrow").forEach(r=>r.onclick=()=>speak(r.dataset.h));
 }
@@ -1103,7 +1178,7 @@ function celebrate(){
   const lv=L[idx];
   const word = wordFor(idx);            // real composed Unicode syllable(s)
   audio.win(); burst(); speak(word);
-  bumpJournal(lv);                      // a review is still an exposure
+  bumpJournal(lv); bumpConcepts(lv);    // a review is still an exposure
   let starEarned=false;
   const it = srs[lv.id] || {stars:0,due:today()};
   if(mistakes===0){ it.stars=Math.min(3,it.stars+1); it.due=today()+DUE_BY_STARS[it.stars]; starEarned=true; }
@@ -1170,9 +1245,16 @@ showMap();
   // M2 sentences: every noun is a real bank word, verbs are known, decoys are real words
   M2.forEach((m,k)=>{
     m.seq.forEach(([w])=>console.assert(
-      M2_VERBS.has(w)||WORD_BANK.some(b=>b.han===w), `M2 #${k}: unknown word ${w}`));
+      M2_VERBS.has(w)||conceptByMarker[w]||WORD_BANK.some(b=>b.han===w), `M2 #${k}: unknown word ${w}`));
     console.assert(WORD_BANK.some(b=>b.han===m.decoy), `M2 #${k}: decoy ${m.decoy} not in bank`);
   });
+  // grammar-by-inference: 는 appears in enough sentences to trigger, and ripeness fires/cools
+  console.assert(M2.filter(m=>m.seq.some(s=>s[0]==="는")).length>=CONCEPTS[0].trigger, "는 appears enough to be discoverable");
+  { const bak=grammar; grammar={"topic-neun":{seen:CONCEPTS[0].trigger,got:false}};
+    console.assert(conceptRipe(CONCEPTS[0]), "concept ripe at trigger");
+    grammar["topic-neun"].cool=CONCEPTS[0].trigger+1;
+    console.assert(!conceptRipe(CONCEPTS[0]), "concept cools after a miss");
+    grammar=bak; }
   console.assert(L.length===WORD_BANK.length+M2.length, "curriculum interleaves all levels");
   console.assert(L.slice(0,4).some(l=>l.m2), "a sentence arrives within the first four levels");
   // lessons + stable ids: every item has a unique id, lessons cover L exactly, ids are stable
@@ -1219,7 +1301,7 @@ async function submitAuth(){
   err.textContent=""; closeAuth();
 }
 async function cloudSave(){ if(!sb||!user) return;
-  try{ await sb.from("progress").upsert({user_id:user.id, data:{doneLessons:[...doneSet],srs,streak,journal}, updated_at:new Date().toISOString()}); }catch(e){}
+  try{ await sb.from("progress").upsert({user_id:user.id, data:{doneLessons:[...doneSet],srs,streak,journal,grammar}, updated_at:new Date().toISOString()}); }catch(e){}
 }
 async function cloudLoad(){ if(!sb||!user) return;
   try{
@@ -1237,6 +1319,10 @@ async function cloudLoad(){ if(!sb||!user) return;
                    day:(lo&&lo.day)||cl.day, cool:Math.max(cl.cool||0, lo?.cool||0) };
       changed=true; }
       writeJSON(JKEY,journal); }
+    if(c.grammar){ for(const k in c.grammar){ const cl=c.grammar[k], lo=grammar[k];
+      grammar[k]={ seen:Math.max(cl.seen||0, lo?.seen||0), got:(lo&&lo.got)||cl.got||false,
+                   day:(lo&&lo.day)||cl.day, cool:Math.max(cl.cool||0, lo?.cool||0), missed:(lo&&lo.missed)||cl.missed };
+      changed=true; } writeJSON(GKEY,grammar); }
     LESSONS.forEach(le=>{ if(doneSet.has(le.id)) le.items.forEach(it=>{ if(!(it.id in srs)) srs[it.id]={stars:0,due:today()}; }); });
     writeJSON(SRS_KEY,srs); cloudSave();
     if(changed && screen==="map") showMap();
