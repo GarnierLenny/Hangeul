@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hangeul Blocks — icon</title>
+<title>Hangeulmoji — icon</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&display=swap">
@@ -38,7 +38,7 @@
 </style>
 </head>
 <body>
-  <h1><b>한글</b> Blocks — app icon</h1>
+  <h1><b>한글</b>moji — app icon</h1>
 
   <div class="stage">
     <div class="previews">
@@ -78,7 +78,7 @@
   <p class="note">One glyph, all the richness in the light: 한 in Black Han Sans, porcelain white,
   optically centred on a luminous gradient with a soft lift. iOS rounds the corners itself, so this
   exports a full <b>opaque square</b>. After download, flatten the alpha:
-  <b>magick hangeul-blocks-icon-1024.png -alpha off icon.png</b></p>
+  <b>magick hangeulmoji-icon-1024.png -alpha off icon.png</b></p>
 
 <script>
 "use strict";
@@ -198,7 +198,7 @@ wire("glyphOpts","glyph"); wire("bgOpts","bg"); wire("blueOpts","blue");
 document.getElementById("download").onclick=()=>{
   canvas.toBlob(bl=>{
     const a=document.createElement("a");
-    a.href=URL.createObjectURL(bl); a.download="hangeul-blocks-icon-1024.png"; a.click();
+    a.href=URL.createObjectURL(bl); a.download="hangeulmoji-icon-1024.png"; a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   },"image/png");
 };

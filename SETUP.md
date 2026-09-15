@@ -1,4 +1,7 @@
-# Hangeul Blocks — backend setup
+# Hangeulmoji — backend setup
+
+> App name is **Hangeulmoji** (formerly "Hangeul Blocks"). The Supabase project below is
+> still named `Hangeul-Blocks` in the dashboard — that's just the project label, not the app name.
 
 Single-file web game (`index.html`). Accounts + progress sync are **optional** —
 the game plays fully without signing in; sign-in just saves/syncs progress.
