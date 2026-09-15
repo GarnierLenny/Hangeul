@@ -352,8 +352,21 @@ const dsound = j => S_CHO[j] ?? S_JUNG[j] ?? "";
 function partsOf(han){ const o=[]; for(const ch of han) o.push(...syllableParts(ch)); return o; }
 function needSetOf(han){ return new Set(partsOf(han).map(p=>p.j)); }
 function blocksOf(han){ return [...han].map(syllableSlots); }
-function romaOf(han){   // from whole syllables so a wrapping vowel keeps its real sound (ㅘ = "wa")
-  let o=""; for(const ch of han){ const s=syllable(ch); if(s) o+=S_CHO[s.cho]+S_JUNG[s.jung]+(s.jong?S_JONG[s.jong]:""); }
+function romaOf(han){   // whole syllables (so ㅘ keeps its real sound "wa"), WITH liaison: a final
+                        // consonant before a silent-onset syllable slides over and takes its onset
+                        // sound — 먹어요 = "meogeoyo", 얼음 = "eoreum". ㅇ(ng) never links.
+                        // ponytail: silent-ㅎ liaison (좋아=joa) isn't handled — no such word in the bank.
+  const syl=[...han].map(syllable);
+  let o="", carry=null;
+  for(let i=0;i<syl.length;i++){
+    const s=syl[i]; if(!s){ carry=null; continue; }
+    const onset = carry!=null ? carry : S_CHO[s.cho];
+    const next=syl[i+1];
+    let coda="";
+    if(s.jong && s.jong!=="ㅇ" && next && next.cho==="ㅇ") carry=S_CHO[s.jong];  // links forward
+    else { coda = s.jong ? S_JONG[s.jong] : ""; carry=null; }
+    o += onset + S_JUNG[s.jung] + coda;
+  }
   return o;
 }
 function trayFor(han){              // one tile per slot (handles repeats) + 1-2 decoys
@@ -446,7 +459,7 @@ const FILL_LATER=[ {noun:"물",pat:PATTERN}, {noun:"나무",pat:PATTERN}, {noun:
    the word bank — their meaning is inferred from the emoji doing its job in the sentence. */
 const M2=[
   { seq:[["나","🙋"],["소","🐮"],["봐요","👀"]],      mean:"I see a cow",              emoji:"👀", decoy:"코" },
-  { seq:[["나","🙋"],["해","☀️"],["봐요","👀"]],      mean:"I see the sun",            emoji:"☀️", decoy:"비" },
+  { seq:[["나","🙋"],["꽃","🌸"],["봐요","👀"]],      mean:"I see a flower",           emoji:"🌸", decoy:"비" },
   { seq:[["나","🙋"],["우유","🥛"],["마셔요","🥤"]],  mean:"I drink milk",             emoji:"🥛", decoy:"게" },
   { seq:[["나","🙋"],["별","⭐"],["봐요","👀"]],      mean:"I see a star",             emoji:"⭐", decoy:"그림" },
   { seq:[["나","🙋"],["물","💧"],["마셔요","🥤"]],    mean:"I drink water",            emoji:"🥤", decoy:"개" },
@@ -1235,6 +1248,11 @@ showMap();
   console.assert(m.cho==="ㅁ"&&m.jung==="ㅜ"&&m.jong==="ㄹ", "decompose 물");
   console.assert(syllable("나").jong==="", "나 has no tail");
   console.assert(romaOf("나무")==="namu"&&romaOf("물")==="mul", "romaja");
+  // liaison: final consonant links into a following silent-onset syllable; ㅇ(ng) does not
+  console.assert(romaOf("먹어요")==="meogeoyo", "liaison meogeoyo, got "+romaOf("먹어요"));
+  console.assert(romaOf("얼음")==="eoreum", "liaison eoreum, got "+romaOf("얼음"));
+  console.assert(romaOf("병원")==="byeongwon", "ng does not link, got "+romaOf("병원"));
+  console.assert(romaOf("학교")==="hakgyo"&&romaOf("얼굴")==="eolgul", "non-liaison unchanged");
   // every buildable slot must have a matching tile
   L.forEach((lv,i)=>{
     if(lv.m2){ lv.seq.forEach(([w])=>console.assert(lv.tray.includes(w), `M2 L${i}: tray missing ${w}`)); return; }
