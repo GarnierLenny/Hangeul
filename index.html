@@ -132,6 +132,7 @@
   .recap{background:var(--accent-soft);color:var(--accent);border-radius:11px;padding:6px 11px;font-weight:700;font-size:15px}
   /* the guess moment */
   .guess-q{font-size:15px;color:var(--muted);text-align:center;margin:2px 0 0}
+  .guess-emoji{font-size:44px;text-align:center;margin:2px 0 -2px}
   .guess-han{font-size:52px;font-weight:800;text-align:center;cursor:pointer;line-height:1.15}
   .choices{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}
   .choice{border:1.5px solid var(--line);background:#fff;border-radius:13px;padding:13px 8px;
@@ -671,7 +672,7 @@ saveSrs();
    { han: {seen, got, day, cool} }. A word "ripens" after RIPE_AT exposures; the app then asks
    what YOU think it means. Right -> it enters your journal. Wrong -> no reveal, it comes back. */
 const JKEY="hangeul.journal.v1";
-const RIPE_AT = Math.max(1, +(new URLSearchParams(location.search).get("ripe")) || 3);
+const RIPE_AT = Math.max(1, +(new URLSearchParams(location.search).get("ripe")) || 2);
 let journal=readJSON(JKEY,{});
 // words in already-completed lessons count as read once
 LESSONS.forEach(le=>{ if(!doneSet.has(le.id)) return;
@@ -687,11 +688,21 @@ function bumpJournal(lv){                      // one exposure per word in the l
     j.seen=(j.seen||0)+1; });
   saveJournal();
 }
+const isRipe = h => { const j=journal[h];
+  return j && !j.got && (j.seen||0)>=RIPE_AT && (j.cool||0)<=(j.seen||0); };
 function nextRipe(preferHan){                  // the word whose meaning is ready to be guessed
-  const ripe = h => { const j=journal[h];
-    return j && !j.got && (j.seen||0)>=RIPE_AT && (j.cool||0)<=(j.seen||0); };
-  if(preferHan && ripe(preferHan)) return preferHan;
-  return Object.keys(journal).find(ripe) || null;
+  if(preferHan && isRipe(preferHan)) return preferHan;
+  return Object.keys(journal).find(isRipe) || null;
+}
+// up to n words ready to guess, this lesson's own words first
+function ripeBatch(le, n){
+  const mine = le.items.filter(it=>!it.m2).map(it=>it.word).filter(isRipe);
+  const rest = Object.keys(journal).filter(h=>isRipe(h) && !mine.includes(h));
+  return [...new Set([...mine, ...rest])].slice(0, n);
+}
+function chainGuesses(list, done){
+  if(!list.length){ done(); return; }
+  showGuess(list[0], ()=> chainGuesses(list.slice(1), done));
 }
 function distractorsFor(mean){
   return shuffle(WORD_BANK.map(w=>w.mean).filter(m=>m!==mean)).slice(0,3);
@@ -699,8 +710,10 @@ function distractorsFor(mean){
 function showGuess(han, cont){                 // asked inside the celebrate veil; no reveal on miss
   const w=WORD_BANK.find(b=>b.han===han); if(!w){ cont(); return; }
   const opts=shuffle([w.mean, ...distractorsFor(w.mean)]);
+  const hint = journal[han] && journal[han].missed;   // a prior miss earns the emoji as a nudge
   panel.innerHTML=`
-    <div class="guess-q">you've read this a few times now…</div>
+    <div class="guess-q">${hint?"here it is again…":"you've read this a couple of times…"}</div>
+    ${hint?`<div class="guess-emoji">${w.emoji}</div>`:``}
     <div class="guess-han" id="guessHan">${han}</div>
     <div class="guess-q"><b>what do you think it means?</b></div>
     <div class="choices">${opts.map(o=>`<button class="choice" data-m="${o}">${o}</button>`).join("")}</div>`;
@@ -717,12 +730,12 @@ function showGuess(han, cont){                 // asked inside the celebrate vei
         <div class="tag">you figured it out yourself — added to your journal</div>
         <button class="cta">continue →</button>`;
     } else {
-      j.cool=(j.seen||0)+2; saveJournal();     // no reveal — it ripens again after 2 more reads
+      j.cool=(j.seen||0)+1; j.missed=true; saveJournal();   // no reveal; comes back next sighting, with the emoji
       try{ audio.err(); }catch(e){}
       panel.innerHTML=`
         <div class="p-emoji">🤫</div>
         <div class="word">not yet</div>
-        <div class="tag">keep reading — it'll come back when you're ready</div>
+        <div class="tag">keep reading — it'll come back with a hint</div>
         <button class="cta">continue →</button>`;
     }
     panel.querySelector(".cta").onclick=cont;
@@ -838,13 +851,11 @@ function completeLesson(){
   const t=today();
   if(streak.day!==t){ streak.count = streak.day===t-1 ? streak.count+1 : 1; streak.day=t; writeJSON(STREAK_KEY,streak); cloudSaveDebounced(); }
   const goNext = fresh && lessonIdx+1 < LESSONS.length;
-  // at most one discovery per lesson (prefer a word from this lesson), keeps the tempo
-  const isRipe=h=>{ const j=journal[h]; return j&&!j.got&&(j.seen||0)>=RIPE_AT&&(j.cool||0)<=(j.seen||0); };
-  const ripe = le.items.filter(it=>!it.m2).map(it=>it.word).find(isRipe) || nextRipe(null);
+  const ripe = ripeBatch(le, 2);     // up to two discoveries per lesson, this lesson's words first
   audio.win(); burst();
   veil.classList.add("show");
   panel.animate([{transform:"translateY(100%)"},{transform:"translateY(0)"}],{duration:340,easing:"cubic-bezier(.2,.8,.2,1)"});
-  if(ripe) showGuess(ripe, ()=>lessonReward(goNext)); else lessonReward(goNext);
+  chainGuesses(ripe, ()=>lessonReward(goNext));
 }
 function lessonReward(goNext){
   const le=LESSONS[lessonIdx];
