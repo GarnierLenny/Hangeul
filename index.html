@@ -65,6 +65,15 @@
   .map{display:grid;grid-template-columns:repeat(4,1fr);gap:22px 12px;justify-items:center;
     width:100%;max-width:330px;margin:0 auto;padding:6px 0 40px}
   @media (max-width:360px){ .map{grid-template-columns:repeat(3,1fr)} }
+  /* desktop: widen the board so it reads as an intentional layout, not a phone strip.
+     the play screen stays comfortably centred — wide drag targets hurt, not help. */
+  @media (min-width:760px){
+    header,.stage{max-width:680px}
+    .stage.map-mode{max-width:none;padding-left:0;padding-right:0}
+    .map-mode > .review-card,.map-mode > .journal-card,.map-mode > .dev{max-width:560px}
+    .map{max-width:560px;grid-template-columns:repeat(5,1fr);gap:28px 18px}
+    .node-em{font-size:38px}
+  }
   .node{display:flex;flex-direction:column;align-items:center}
   .node-btn{position:relative;width:64px;height:64px;border-radius:20px;display:grid;place-items:center;
     font-size:31px;line-height:1;background:#fff;box-shadow:var(--shadow);border:0;cursor:pointer;transition:transform .15s}
